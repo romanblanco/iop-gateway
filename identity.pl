@@ -1,24 +1,24 @@
 package identity;
 
+use strict;
+use warnings;
 use JSON::PP;
 use MIME::Base64;
 
 sub set_identity_header {
-    my $identity;
     my $r = shift;
 
-    my $ssl_client_s_dn = $r->variable("ssl_client_s_dn");
-    my $ssl_client_verify = $r->variable("ssl_client_verify");
+    my $ssl_client_s_dn = $r->variable("ssl_client_s_dn") // "";
+    my $ssl_client_verify = $r->variable("ssl_client_verify") // "NONE";
 
-    if (!$ssl_client_s_dn || $ssl_client_s_dn eq "" || !$ssl_client_verify || $ssl_client_verify ne "SUCCESS") {
+    if ($ssl_client_s_dn eq "" || $ssl_client_verify ne "SUCCESS") {
         return _identity_from_forwarded($r);
     }
 
-    # Extract org_id from header first, fallback to certificate subject
-    my $org_id = $r->header_in("X-Org-Id");
+    my $org_id = $r->header_in("X-Org-Id") // "";
     my $cn;
 
-    if (!$org_id || $org_id eq "") {
+    if ($org_id eq "") {
         if ($ssl_client_s_dn =~ /O=([^,]+)/) {
             $org_id = $1;
         } else {
@@ -34,9 +34,10 @@ sub set_identity_header {
         return undef;
     }
 
-    my $forwarded = $r->header_in("Forwarded"); # RFC 7239
-    if (!$forwarded || $forwarded eq "") {
-        my $identity_type = $r->variable('identity_type');
+    my $identity;
+    my $forwarded = $r->header_in("Forwarded") // "";
+    if ($forwarded eq "") {
+        my $identity_type = $r->variable('identity_type') // "";
         if ($identity_type eq "associate") {
             $identity = {
                 'identity' => {
@@ -45,22 +46,19 @@ sub set_identity_header {
                     'associate' => {
                         'email' => 'iop-gateway@example.com',
                         'Role' => [],
-                        'subject_dn' => 'iop-gateway'
-                    }
+                        'subject_dn' => 'iop-gateway',
+                    },
                 },
                 'entitlements' => {
-                    'insights' => { 'is_entitled' => JSON::PP::true }
-                }
+                    'insights' => { 'is_entitled' => JSON::PP::true },
+                },
             };
         } else {
-            # Use User identity for non-forwarded requests with no forced identity-type set
             $identity = {
                 'identity' => {
                     'auth_type' => 'jwt-auth',
                     'org_id' => $org_id,
-                    'internal' => {
-                        'org_id' => $org_id
-                    },
+                    'internal' => { 'org_id' => $org_id },
                     'type' => 'User',
                     'user' => {
                         'email' => 'iop-gateway@example.com',
@@ -71,42 +69,37 @@ sub set_identity_header {
                         'last_name' => 'Last',
                         'locale' => 'en_US',
                         'user_id' => '1',
-                        'username' => $cn
-                    }
+                        'username' => $cn,
+                    },
                 },
                 'entitlements' => {
-                    'insights' => { 'is_entitled' => JSON::PP::true }
-                }
+                    'insights' => { 'is_entitled' => JSON::PP::true },
+                },
             };
-
         }
     } else {
-        # Use System identity for forwarded requests and utilize the for value
-        # that should include system's UUID (i.e. subscription id).
         my $owner_id;
         if ($forwarded =~ /for="?_([^,;"]+)"?/i) {
             $owner_id = $1;
         } else {
-            $r->log_error(0, "Missing Forwared for header value (as per RFC7239): $forwarded");
+            $r->log_error(0, "Missing Forwarded for header value (as per RFC7239): $forwarded");
             return undef;
         }
 
         $identity = {
             'identity' => {
                 'org_id' => $org_id,
-                'internal' => {
-                    'org_id' => $org_id
-                },
+                'internal' => { 'org_id' => $org_id },
                 'type' => 'System',
                 'auth_type' => 'cert-auth',
                 'system' => {
                     'cn' => $owner_id,
-                    'cert_type' => 'satellite'
-                }
+                    'cert_type' => 'satellite',
+                },
             },
             'entitlements' => {
-                'insights' => { 'is_entitled' => JSON::PP::true }
-            }
+                'insights' => { 'is_entitled' => JSON::PP::true },
+            },
         };
     }
 
@@ -116,8 +109,8 @@ sub set_identity_header {
 sub _identity_from_forwarded {
     my $r = shift;
 
-    my $forwarded = $r->header_in("Forwarded");
-    if (!$forwarded || $forwarded eq "") {
+    my $forwarded = $r->header_in("Forwarded") // "";
+    if ($forwarded eq "") {
         $r->log_error(0, "No client certificate and no Forwarded header, cannot identify request");
         return undef;
     }
@@ -130,8 +123,8 @@ sub _identity_from_forwarded {
         return undef;
     }
 
-    my $org_id = $r->header_in("X-Org-Id");
-    if (!$org_id || $org_id eq "") {
+    my $org_id = $r->header_in("X-Org-Id") // "";
+    if ($org_id eq "") {
         $r->log_error(0, "No client cert and no X-Org-Id header, rejecting request");
         return undef;
     }
@@ -139,19 +132,17 @@ sub _identity_from_forwarded {
     my $identity = {
         'identity' => {
             'org_id' => $org_id,
-            'internal' => {
-                'org_id' => $org_id
-            },
+            'internal' => { 'org_id' => $org_id },
             'type' => 'System',
             'auth_type' => 'cert-auth',
             'system' => {
                 'cn' => $owner_id,
-                'cert_type' => 'satellite'
-            }
+                'cert_type' => 'satellite',
+            },
         },
         'entitlements' => {
-            'insights' => { 'is_entitled' => JSON::PP::true }
-        }
+            'insights' => { 'is_entitled' => JSON::PP::true },
+        },
     };
 
     return encode_base64(encode_json($identity), '');
